@@ -2,18 +2,21 @@
 
 use rand::Rng;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering::Relaxed},
+    sync::{
+        atomic::{AtomicU16, Ordering::Relaxed},
+        Arc,
+    },
     thread,
 };
 
-const SCREEN_WIDTH: usize = 25600;
-const SCREEN_HEIGHT: usize = 14400;
+const SCREEN_WIDTH: usize = 512;
+const SCREEN_HEIGHT: usize = 288;
 
 const ITERATIONS_R: usize = 200;
 const ITERATIONS_G: usize = 100;
 const ITERATIONS_B: usize = 50;
 
-const POINTS: usize = 100_000_000;
+const POINTS: usize = 10_000_0;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
@@ -41,7 +44,7 @@ struct Pixel {
     y: usize,
 }
 
-type Buddhabrot = [[AtomicUsize; SCREEN_WIDTH]; SCREEN_HEIGHT];
+type Buddhabrot = Vec<Vec<AtomicU16>>;
 
 fn get_pixel(c: &Complex) -> Option<Pixel> {
     if c.re < TOP_LEFT.re
@@ -103,12 +106,12 @@ fn pixels_to_png(
         }
     }
 
-    image.save("buddhabrot.png")?;
+    image.save("buddhabrot.bmp")?;
 
     Ok(())
 }
 
-fn generate(iterations: usize, pixels: &mut Buddhabrot) {
+fn generate(iterations: usize, pixels: &Buddhabrot) {
     let mut rng = rand::thread_rng();
 
     // Create a two dimensional array of pixels
@@ -163,40 +166,54 @@ impl Normalize for Buddhabrot {
         for y in 0..SCREEN_HEIGHT {
             for x in 0..SCREEN_WIDTH {
                 let value = self[y][x].load(Relaxed);
-                self[y][x].store(((value as f64 / max as f64) * 255.0) as usize, Relaxed);
+                self[y][x].store(((value as f64 / max as f64) * 255.0) as u16, Relaxed);
             }
         }
     }
 }
 
-unsafe fn generate_channel(iterations: usize) -> Buddhabrot {
+unsafe fn generate_channel(iterations: usize) -> Arc<Buddhabrot> {
     let num_cores = 32;
 
     let mut threads = vec![];
 
-    let mut pixels: Box<Buddhabrot> = Box::new([[AtomicUsize::new(0); SCREEN_WIDTH]; SCREEN_HEIGHT]);
-    for i in 0..num_cores {
-        threads.push(thread::spawn(|| {
-            generate(iterations, &mut pixels);
+    let mut pixels: Buddhabrot = Vec::with_capacity(SCREEN_HEIGHT);
+    for _ in 0..SCREEN_HEIGHT {
+        let mut row = Vec::with_capacity(SCREEN_WIDTH);
+        for _ in 0..SCREEN_WIDTH {
+            row.push(AtomicU16::new(0));
+        }
+        pixels.push(row);
+    }
+
+    let pixels = Arc::new(pixels);
+
+    for _i in 0..num_cores {
+        let pixels = Arc::clone(&pixels);
+        threads.push(thread::spawn(move || {
+            generate(iterations, &pixels);
         }));
     }
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
-    *pixels
+    pixels
 }
 
 fn main() {
     unsafe {
-        dbg!("Generating red");
+        println!("Generating red");
         let r = generate_channel(ITERATIONS_R);
-        dbg!("Generating green");
+        println!("Generating green");
         let g = generate_channel(ITERATIONS_G);
-        dbg!("Generating blue");
+        println!("Generating blue");
         let b = generate_channel(ITERATIONS_B);
 
+        println!("Normalizing red");
         r.normalize();
+        println!("Normalizing green");
         g.normalize();
+        println!("Normalizing blue");
         b.normalize();
 
         pixels_to_png(&r, &g, &b).unwrap();
