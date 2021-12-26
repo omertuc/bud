@@ -1,21 +1,19 @@
 #!cargo r
 
-use derive_deref::{Deref, DerefMut};
 use rand::Rng;
 use std::{
-    ops::Add,
-    sync::{Arc, Mutex},
+    sync::atomic::{AtomicUsize, Ordering::Relaxed},
     thread,
 };
 
-const SCREEN_WIDTH: usize = 2560;
-const SCREEN_HEIGHT: usize = 1440;
+const SCREEN_WIDTH: usize = 25600;
+const SCREEN_HEIGHT: usize = 14400;
 
 const ITERATIONS_R: usize = 200;
 const ITERATIONS_G: usize = 100;
 const ITERATIONS_B: usize = 50;
 
-const POINTS: usize = 1_000_000_000;
+const POINTS: usize = 100_000_000;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
@@ -42,6 +40,8 @@ struct Pixel {
     x: usize,
     y: usize,
 }
+
+type Buddhabrot = [[AtomicUsize; SCREEN_WIDTH]; SCREEN_HEIGHT];
 
 fn get_pixel(c: &Complex) -> Option<Pixel> {
     if c.re < TOP_LEFT.re
@@ -82,7 +82,11 @@ impl Complex {
     }
 }
 
-fn pixels_to_png(r: Buddhabrot, g: Buddhabrot, b: Buddhabrot) -> Result<(), Box<dyn std::error::Error>> {
+fn pixels_to_png(
+    r: &Buddhabrot,
+    g: &Buddhabrot,
+    b: &Buddhabrot,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut image = image::ImageBuffer::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
 
     for y in 0..SCREEN_HEIGHT {
@@ -91,9 +95,9 @@ fn pixels_to_png(r: Buddhabrot, g: Buddhabrot, b: Buddhabrot) -> Result<(), Box<
                 x as u32,
                 y as u32,
                 image::Rgb([
-                    r[y][x] as u8,
-                    g[y][x] as u8,
-                    b[y][x] as u8
+                    r[y][x].load(Relaxed) as u8,
+                    g[y][x].load(Relaxed) as u8,
+                    b[y][x].load(Relaxed) as u8,
                 ]),
             );
         }
@@ -104,58 +108,10 @@ fn pixels_to_png(r: Buddhabrot, g: Buddhabrot, b: Buddhabrot) -> Result<(), Box<
     Ok(())
 }
 
-#[derive(Deref, DerefMut, Debug, Clone)]
-struct Buddhabrot(Vec<Vec<usize>>);
-
-impl Buddhabrot {
-    fn normalize(self) -> Buddhabrot {
-        let mut max = 0;
-        for row in self.0.iter() {
-            for &color in row.iter() {
-                if color > max {
-                    max = color;
-                }
-            }
-        }
-
-        let mut new_pixels = Vec::with_capacity(SCREEN_HEIGHT);
-        for row in self.0.iter() {
-            let mut new_row = Vec::with_capacity(SCREEN_WIDTH);
-            for &color in row.iter() {
-                new_row.push((((color as f64) / (max as f64)) * 255.0) as usize);
-            }
-            new_pixels.push(new_row);
-        }
-
-        Buddhabrot(new_pixels)
-    }
-}
-
-impl Add<Buddhabrot> for Buddhabrot {
-    type Output = Buddhabrot;
-
-    fn add(self, other: Buddhabrot) -> Buddhabrot {
-        let mut new_pixels = Vec::with_capacity(self.0.len());
-
-        for (row_a, row_b) in self.0.iter().zip(other.0.iter()) {
-            let mut new_row = Vec::with_capacity(row_a.len());
-
-            for (a, b) in row_a.iter().zip(row_b.iter()) {
-                new_row.push(a + b);
-            }
-
-            new_pixels.push(new_row);
-        }
-
-        Buddhabrot(new_pixels)
-    }
-}
-
-fn generate(iterations: usize) -> Buddhabrot {
+fn generate(iterations: usize, pixels: &mut Buddhabrot) {
     let mut rng = rand::thread_rng();
 
     // Create a two dimensional array of pixels
-    let mut pixels: Vec<Vec<usize>> = vec![vec![0; SCREEN_WIDTH]; SCREEN_HEIGHT];
 
     for _ in 0..POINTS {
         // Generate a random complex number
@@ -178,52 +134,71 @@ fn generate(iterations: usize) -> Buddhabrot {
                 for v in visited {
                     let pixel = get_pixel(&v);
                     if let Some(pixel) = pixel {
-                        pixels[pixel.y][pixel.x] += 1;
+                        pixels[pixel.y][pixel.x].fetch_add(1, Relaxed);
                     }
                 }
                 break;
             }
         }
     }
-
-    Buddhabrot(pixels)
 }
 
-fn generate_channel(iterations: usize) -> Buddhabrot {
-    let num_cores = num_cpus::get();
+trait Normalize {
+    fn normalize(&self);
+}
 
-    let results = Arc::new(Mutex::new(vec![]));
+impl Normalize for Buddhabrot {
+    fn normalize(self: &Buddhabrot) {
+        let mut max = 0;
+
+        for y in 0..SCREEN_HEIGHT {
+            for x in 0..SCREEN_WIDTH {
+                let value = self[y][x].load(Relaxed);
+                if value > max {
+                    max = value;
+                }
+            }
+        }
+
+        for y in 0..SCREEN_HEIGHT {
+            for x in 0..SCREEN_WIDTH {
+                let value = self[y][x].load(Relaxed);
+                self[y][x].store(((value as f64 / max as f64) * 255.0) as usize, Relaxed);
+            }
+        }
+    }
+}
+
+unsafe fn generate_channel(iterations: usize) -> Buddhabrot {
+    let num_cores = 32;
+
     let mut threads = vec![];
 
-    for i in 1..num_cores {
-        let results = results.clone();
-        threads.push(thread::spawn(move || {
-            let result = generate(iterations);
-
-            println!("Thread {} finished", i);
-
-            let mut results = results.lock().unwrap();
-            results.push(result);
+    let mut pixels: Box<Buddhabrot> = Box::new([[AtomicUsize::new(0); SCREEN_WIDTH]; SCREEN_HEIGHT]);
+    for i in 0..num_cores {
+        threads.push(thread::spawn(|| {
+            generate(iterations, &mut pixels);
         }));
     }
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
-    let results = (*results.lock().unwrap()).clone();
-    let joint_buddha = results.into_iter().fold(Buddhabrot(vec![vec![0; SCREEN_WIDTH]; SCREEN_HEIGHT]), |acc, x| {
-        acc + x
-    });
-
-    joint_buddha
+    *pixels
 }
 
 fn main() {
-    dbg!("Generating red");
-    let r = generate_channel(ITERATIONS_R).normalize();
-    dbg!("Generating green");
-    let g = generate_channel(ITERATIONS_G).normalize();
-    dbg!("Generating blue");
-    let b = generate_channel(ITERATIONS_B).normalize();
+    unsafe {
+        dbg!("Generating red");
+        let r = generate_channel(ITERATIONS_R);
+        dbg!("Generating green");
+        let g = generate_channel(ITERATIONS_G);
+        dbg!("Generating blue");
+        let b = generate_channel(ITERATIONS_B);
 
-    pixels_to_png(r, g, b).unwrap();
+        r.normalize();
+        g.normalize();
+        b.normalize();
+
+        pixels_to_png(&r, &g, &b).unwrap();
+    }
 }
