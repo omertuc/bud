@@ -9,14 +9,14 @@ use std::{
     thread,
 };
 
-const SCREEN_WIDTH: usize = 512;
-const SCREEN_HEIGHT: usize = 288;
+const SCREEN_WIDTH: usize = 25600 * 2;
+const SCREEN_HEIGHT: usize = 14400 * 2;
 
 const ITERATIONS_R: usize = 200;
 const ITERATIONS_G: usize = 100;
 const ITERATIONS_B: usize = 50;
 
-const POINTS: usize = 10_000_0;
+const POINTS: usize = 100_000_000_000;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
@@ -106,7 +106,7 @@ fn pixels_to_png(
         }
     }
 
-    image.save("buddhabrot.bmp")?;
+    image.save("buddhabrot.png")?;
 
     Ok(())
 }
