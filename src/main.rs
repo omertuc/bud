@@ -81,45 +81,47 @@ fn pixels_to_png(
     Ok(())
 }
 
+fn try_escape(pow: f64, c: Complex<f64>, visited: &mut [Complex<f64>; ITERATIONS_R]) -> Option<usize> {
+    let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
+    for i in 0..ITERATIONS_R {
+        z = z.powf(pow) + c;
+        visited[i] = z;
+
+        if z.re * z.re + z.im * z.im > 4.0 {
+            return Some(i);
+        }
+    }
+
+    return None;
+}
+
 fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel, pow: f64) {
     let mut rng = rand::thread_rng();
-
-    // Create a two dimensional array of pixels
     let mut visited = [Complex::default(); ITERATIONS_R];
+
     for _ in 0..POINTS {
-        // Generate a random complex number
         let c = Complex::<f64> {
             re: rng.gen::<f64>() * COMPLEX_PLANE_VIEW_WIDTH as f64 + TOP_LEFT.re,
             im: TOP_LEFT.im - rng.gen::<f64>() * COMPLEX_PLANE_VIEW_HEIGHT as f64,
         };
 
-        let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
-        for i in 0..ITERATIONS_R {
-            // Calculate the next complex number
-            z = z.powf(pow) + c;
+        if let Some(i) = try_escape(pow, c, &mut visited) {
+            let should_green = i < ITERATIONS_G;
+            let should_blue = i < ITERATIONS_B;
 
-            visited[i] = z;
+            for (i, v) in visited.iter().take(i).enumerate() {
+                let pixel = get_pixel(&v);
 
-            if z.re * z.re + z.im * z.im > 4.0 {
-                let should_green = i < ITERATIONS_G;
-                let should_blue = i < ITERATIONS_B;
+                if let Some(pixel) = pixel {
+                    r[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                    if should_green && i < ITERATIONS_G {
+                        g[pixel.y][pixel.x].fetch_add(1, Relaxed);
 
-                for (i, v) in visited.iter().take(i).enumerate() {
-                    let pixel = get_pixel(&v);
-
-                    if let Some(pixel) = pixel {
-                        r[pixel.y][pixel.x].fetch_add(1, Relaxed);
-                        if should_green && i < ITERATIONS_G {
-                            g[pixel.y][pixel.x].fetch_add(1, Relaxed);
-
-                            if should_blue && i < ITERATIONS_B {
-                                b[pixel.y][pixel.x].fetch_add(1, Relaxed);
-                            }
+                        if should_blue && i < ITERATIONS_B {
+                            b[pixel.y][pixel.x].fetch_add(1, Relaxed);
                         }
                     }
                 }
-
-                break;
             }
         }
     }
