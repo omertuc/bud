@@ -85,32 +85,26 @@ fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel,
     let mut rng = rand::thread_rng();
 
     // Create a two dimensional array of pixels
-
-    for i in 0..POINTS {
-        if i % (1024 * 128) == 0 {
-            // println!("{:.2}% Done", (i as f64 / POINTS as f64) * 100.0);
-        }
-
+    let mut visited = [Complex::default(); ITERATIONS_R];
+    for _ in 0..POINTS {
         // Generate a random complex number
         let c = Complex::<f64> {
             re: rng.gen::<f64>() * COMPLEX_PLANE_VIEW_WIDTH as f64 + TOP_LEFT.re,
             im: TOP_LEFT.im - rng.gen::<f64>() * COMPLEX_PLANE_VIEW_HEIGHT as f64,
         };
 
-        let mut visited = Vec::with_capacity(ITERATIONS_R);
-
         let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
         for i in 0..ITERATIONS_R {
             // Calculate the next complex number
             z = z.powf(pow) + c;
 
-            visited.push(z);
+            visited[i] = z;
 
             if z.re * z.re + z.im * z.im > 4.0 {
                 let should_green = i < ITERATIONS_G;
                 let should_blue = i < ITERATIONS_B;
 
-                for (i, v) in visited.iter().enumerate() {
+                for (i, v) in visited.iter().take(i).enumerate() {
                     let pixel = get_pixel(&v);
 
                     if let Some(pixel) = pixel {
@@ -119,7 +113,7 @@ fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel,
                             g[pixel.y][pixel.x].fetch_add(1, Relaxed);
 
                             if should_blue && i < ITERATIONS_B {
-                                g[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                                b[pixel.y][pixel.x].fetch_add(1, Relaxed);
                             }
                         }
                     }
@@ -209,7 +203,7 @@ fn generate_channel(pow: f64) -> (
 fn main() {
     const FRAMES: usize = 10 * 60;
     const FROM: f64 = 1.0;
-    const TO: f64 = 4.0;
+    const TO: f64 = 2.0;
 
     for i in 0..(FRAMES) {
         let done = i as f64 / FRAMES as f64;
