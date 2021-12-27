@@ -100,49 +100,27 @@ fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel,
         let mut visited = Vec::with_capacity(ITERATIONS_R);
 
         let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
-
-        let mut should_green = true;
-        let mut should_blue = true;
-
         for i in 0..ITERATIONS_R {
-            if i > ITERATIONS_G {
-                should_green = false;
-            }
-
-            if i > ITERATIONS_B {
-                should_blue = false;
-            }
-
             // Calculate the next complex number
             z = z.powf(pow) + c;
 
             visited.push(z);
 
             if z.re * z.re + z.im * z.im > 4.0 {
-                for v in visited.iter() {
+                let should_green = i < ITERATIONS_G;
+                let should_blue = i < ITERATIONS_B;
+
+                for (i, v) in visited.iter().enumerate() {
                     let pixel = get_pixel(&v);
 
                     if let Some(pixel) = pixel {
                         r[pixel.y][pixel.x].fetch_add(1, Relaxed);
-                    }
-                }
-
-                if should_green {
-                    for v in visited.iter().take(ITERATIONS_G) {
-                        let pixel = get_pixel(&v);
-
-                        if let Some(pixel) = pixel {
+                        if should_green && i < ITERATIONS_G {
                             g[pixel.y][pixel.x].fetch_add(1, Relaxed);
-                        }
-                    }
-                }
 
-                if should_blue {
-                    for v in visited.iter().take(ITERATIONS_B) {
-                        let pixel = get_pixel(&v);
-
-                        if let Some(pixel) = pixel {
-                            b[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                            if should_blue && i < ITERATIONS_B {
+                                g[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                            }
                         }
                     }
                 }
