@@ -1,5 +1,4 @@
-#!cargo r
-
+use num_complex::Complex;
 use rand::Rng;
 use std::{
     sync::{
@@ -9,14 +8,14 @@ use std::{
     thread,
 };
 
-const SCREEN_WIDTH: usize = 2560 * 1;
-const SCREEN_HEIGHT: usize = 1440 * 1;
+const SCREEN_WIDTH: usize = 500 * 1;
+const SCREEN_HEIGHT: usize = 300 * 1;
 
-const ITERATIONS_R: usize = 20000;
-const ITERATIONS_G: usize = 10000;
-const ITERATIONS_B: usize = 5000;
+const ITERATIONS_R: usize = 50;
+const ITERATIONS_G: usize = 40;
+const ITERATIONS_B: usize = 30;
 
-const POINTS: usize = 1_0_000_000;
+const POINTS: usize = 1_000_00;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
@@ -24,19 +23,13 @@ const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
 
 const PAN_RIGHT: f64 = 0.5;
 
-const TOP_LEFT: Complex = Complex {
+const TOP_LEFT: Complex<f64> = Complex::<f64> {
     re: COMPLEX_PLANE_VIEW_WIDTH / -2.0 - PAN_RIGHT,
     im: COMPLEX_PLANE_VIEW_HEIGHT / 2.0,
 };
 
 const PIXEL_WIDTH: f64 = COMPLEX_PLANE_VIEW_WIDTH as f64 / SCREEN_WIDTH as f64;
 const PIXEL_HEIGHT: f64 = PIXEL_WIDTH;
-
-#[derive(Debug, Copy, Clone)]
-struct Complex {
-    re: f64,
-    im: f64,
-}
 
 #[derive(Debug)]
 struct Pixel {
@@ -46,7 +39,7 @@ struct Pixel {
 
 type BuddhabrotChannel = Vec<Vec<AtomicU16>>;
 
-fn get_pixel(c: &Complex) -> Option<Pixel> {
+fn get_pixel(c: &Complex<f64>) -> Option<Pixel> {
     if c.re < TOP_LEFT.re
         || c.re > TOP_LEFT.re + COMPLEX_PLANE_VIEW_WIDTH
         || c.im > TOP_LEFT.im
@@ -61,34 +54,11 @@ fn get_pixel(c: &Complex) -> Option<Pixel> {
     });
 }
 
-impl Complex {
-    fn add(&self, other: &Complex) -> Complex {
-        Complex {
-            re: self.re + other.re,
-            im: self.im + other.im,
-        }
-    }
-
-    fn mul(&self, other: &Complex) -> Complex {
-        Complex {
-            re: self.re * other.re - self.im * other.im,
-            im: self.re * other.im + self.im * other.re,
-        }
-    }
-
-    fn square(&self) -> Complex {
-        self.mul(self)
-    }
-
-    fn abssq(&self) -> f64 {
-        self.re * self.re + self.im * self.im
-    }
-}
-
 fn pixels_to_png(
     r: &BuddhabrotChannel,
     g: &BuddhabrotChannel,
     b: &BuddhabrotChannel,
+    fname: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut image = image::ImageBuffer::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
 
@@ -106,30 +76,30 @@ fn pixels_to_png(
         }
     }
 
-    image.save("buddhabrot.png")?;
+    image.save(fname)?;
 
     Ok(())
 }
 
-fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel) {
+fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel, pow: f64) {
     let mut rng = rand::thread_rng();
 
     // Create a two dimensional array of pixels
 
     for i in 0..POINTS {
         if i % (1024 * 128) == 0 {
-            println!("{:.2}% Done", (i as f64 / POINTS as f64) * 100.0);
+            // println!("{:.2}% Done", (i as f64 / POINTS as f64) * 100.0);
         }
 
         // Generate a random complex number
-        let c = Complex {
+        let c = Complex::<f64> {
             re: rng.gen::<f64>() * COMPLEX_PLANE_VIEW_WIDTH as f64 + TOP_LEFT.re,
             im: TOP_LEFT.im - rng.gen::<f64>() * COMPLEX_PLANE_VIEW_HEIGHT as f64,
         };
 
         let mut visited = Vec::with_capacity(ITERATIONS_R);
 
-        let mut z = Complex { re: 0.0, im: 0.0 };
+        let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
 
         let mut should_green = true;
         let mut should_blue = true;
@@ -144,11 +114,11 @@ fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel)
             }
 
             // Calculate the next complex number
-            z = z.square().add(&c);
+            z = z.powf(pow) + c;
 
             visited.push(z);
 
-            if z.abssq() > 4.0 {
+            if z.re * z.re + z.im * z.im > 4.0 {
                 for v in visited.iter() {
                     let pixel = get_pixel(&v);
 
@@ -209,7 +179,11 @@ impl Normalize for BuddhabrotChannel {
     }
 }
 
-fn generate_channel() -> (Arc<BuddhabrotChannel>, Arc<BuddhabrotChannel>, Arc<BuddhabrotChannel>) {
+fn generate_channel(pow: f64) -> (
+    Arc<BuddhabrotChannel>,
+    Arc<BuddhabrotChannel>,
+    Arc<BuddhabrotChannel>,
+) {
     let num_cores = 32;
 
     let mut threads = vec![];
@@ -241,25 +215,30 @@ fn generate_channel() -> (Arc<BuddhabrotChannel>, Arc<BuddhabrotChannel>, Arc<Bu
         let g = Arc::clone(&g);
         let b = Arc::clone(&b);
         threads.push(thread::spawn(move || {
-            generate(&r, &g, &b);
+            generate(&r, &g, &b, pow);
         }));
     }
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
-    println!("Normalizing red");
     r.normalize();
-    println!("Normalizing green");
     g.normalize();
-    println!("Normalizing blue");
     b.normalize();
-
 
     (r, g, b)
 }
 
 fn main() {
-    let (r, g, b) = generate_channel();
+    const FRAMES: usize = 10 * 60;
+    const FROM: f64 = 1.0;
+    const TO: f64 = 4.0;
 
-    pixels_to_png(&r, &g, &b).unwrap();
+    for i in 0..(FRAMES) {
+        let done = i as f64 / FRAMES as f64;
+        let (r, g, b) = generate_channel((i as f64 / FRAMES as f64) * (TO - FROM) + FROM);
+        pixels_to_png(&r, &g, &b, format!("frame-{:08}.png", i)).unwrap();
+        println!("{:.2}% Done", done * 100.0);
+
+    }
+
 }
