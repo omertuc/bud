@@ -9,14 +9,14 @@ use std::{
     thread,
 };
 
-const SCREEN_WIDTH: usize = 25600 * 2;
-const SCREEN_HEIGHT: usize = 14400 * 2;
+const SCREEN_WIDTH: usize = 2560 * 1;
+const SCREEN_HEIGHT: usize = 1440 * 1;
 
-const ITERATIONS_R: usize = 200;
-const ITERATIONS_G: usize = 100;
-const ITERATIONS_B: usize = 50;
+const ITERATIONS_R: usize = 20000;
+const ITERATIONS_G: usize = 10000;
+const ITERATIONS_B: usize = 5000;
 
-const POINTS: usize = 100_000_000_000;
+const POINTS: usize = 1_0_000_000;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
@@ -44,7 +44,7 @@ struct Pixel {
     y: usize,
 }
 
-type Buddhabrot = Vec<Vec<AtomicU16>>;
+type BuddhabrotChannel = Vec<Vec<AtomicU16>>;
 
 fn get_pixel(c: &Complex) -> Option<Pixel> {
     if c.re < TOP_LEFT.re
@@ -86,9 +86,9 @@ impl Complex {
 }
 
 fn pixels_to_png(
-    r: &Buddhabrot,
-    g: &Buddhabrot,
-    b: &Buddhabrot,
+    r: &BuddhabrotChannel,
+    g: &BuddhabrotChannel,
+    b: &BuddhabrotChannel,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut image = image::ImageBuffer::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
 
@@ -111,35 +111,72 @@ fn pixels_to_png(
     Ok(())
 }
 
-fn generate(iterations: usize, pixels: &Buddhabrot) {
+fn generate(r: &BuddhabrotChannel, g: &BuddhabrotChannel, b: &BuddhabrotChannel) {
     let mut rng = rand::thread_rng();
 
     // Create a two dimensional array of pixels
 
-    for _ in 0..POINTS {
+    for i in 0..POINTS {
+        if i % (1024 * 128) == 0 {
+            println!("{:.2}% Done", (i as f64 / POINTS as f64) * 100.0);
+        }
+
         // Generate a random complex number
         let c = Complex {
             re: rng.gen::<f64>() * COMPLEX_PLANE_VIEW_WIDTH as f64 + TOP_LEFT.re,
             im: TOP_LEFT.im - rng.gen::<f64>() * COMPLEX_PLANE_VIEW_HEIGHT as f64,
         };
 
-        let mut visited = Vec::with_capacity(iterations);
+        let mut visited = Vec::with_capacity(ITERATIONS_R);
 
         let mut z = Complex { re: 0.0, im: 0.0 };
 
-        for _ in 0..iterations {
+        let mut should_green = true;
+        let mut should_blue = true;
+
+        for i in 0..ITERATIONS_R {
+            if i > ITERATIONS_G {
+                should_green = false;
+            }
+
+            if i > ITERATIONS_B {
+                should_blue = false;
+            }
+
             // Calculate the next complex number
             z = z.square().add(&c);
 
             visited.push(z);
 
             if z.abssq() > 4.0 {
-                for v in visited {
+                for v in visited.iter() {
                     let pixel = get_pixel(&v);
+
                     if let Some(pixel) = pixel {
-                        pixels[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                        r[pixel.y][pixel.x].fetch_add(1, Relaxed);
                     }
                 }
+
+                if should_green {
+                    for v in visited.iter().take(ITERATIONS_G) {
+                        let pixel = get_pixel(&v);
+
+                        if let Some(pixel) = pixel {
+                            g[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                        }
+                    }
+                }
+
+                if should_blue {
+                    for v in visited.iter().take(ITERATIONS_B) {
+                        let pixel = get_pixel(&v);
+
+                        if let Some(pixel) = pixel {
+                            b[pixel.y][pixel.x].fetch_add(1, Relaxed);
+                        }
+                    }
+                }
+
                 break;
             }
         }
@@ -150,8 +187,8 @@ trait Normalize {
     fn normalize(&self);
 }
 
-impl Normalize for Buddhabrot {
-    fn normalize(self: &Buddhabrot) {
+impl Normalize for BuddhabrotChannel {
+    fn normalize(self: &BuddhabrotChannel) {
         let mut max = 0;
 
         for y in 0..SCREEN_HEIGHT {
@@ -172,50 +209,57 @@ impl Normalize for Buddhabrot {
     }
 }
 
-unsafe fn generate_channel(iterations: usize) -> Arc<Buddhabrot> {
+fn generate_channel() -> (Arc<BuddhabrotChannel>, Arc<BuddhabrotChannel>, Arc<BuddhabrotChannel>) {
     let num_cores = 32;
 
     let mut threads = vec![];
 
-    let mut pixels: Buddhabrot = Vec::with_capacity(SCREEN_HEIGHT);
+    let mut r: BuddhabrotChannel = Vec::with_capacity(SCREEN_HEIGHT);
+    let mut g: BuddhabrotChannel = Vec::with_capacity(SCREEN_HEIGHT);
+    let mut b: BuddhabrotChannel = Vec::with_capacity(SCREEN_HEIGHT);
+
     for _ in 0..SCREEN_HEIGHT {
-        let mut row = Vec::with_capacity(SCREEN_WIDTH);
+        let mut row_r = Vec::with_capacity(SCREEN_WIDTH);
+        let mut row_g = Vec::with_capacity(SCREEN_WIDTH);
+        let mut row_b = Vec::with_capacity(SCREEN_WIDTH);
         for _ in 0..SCREEN_WIDTH {
-            row.push(AtomicU16::new(0));
+            row_r.push(AtomicU16::new(0));
+            row_g.push(AtomicU16::new(0));
+            row_b.push(AtomicU16::new(0));
         }
-        pixels.push(row);
+        r.push(row_r);
+        g.push(row_g);
+        b.push(row_b);
     }
 
-    let pixels = Arc::new(pixels);
+    let r = Arc::new(r);
+    let g = Arc::new(g);
+    let b = Arc::new(b);
 
     for _i in 0..num_cores {
-        let pixels = Arc::clone(&pixels);
+        let r = Arc::clone(&r);
+        let g = Arc::clone(&g);
+        let b = Arc::clone(&b);
         threads.push(thread::spawn(move || {
-            generate(iterations, &pixels);
+            generate(&r, &g, &b);
         }));
     }
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
-    pixels
+    println!("Normalizing red");
+    r.normalize();
+    println!("Normalizing green");
+    g.normalize();
+    println!("Normalizing blue");
+    b.normalize();
+
+
+    (r, g, b)
 }
 
 fn main() {
-    unsafe {
-        println!("Generating red");
-        let r = generate_channel(ITERATIONS_R);
-        println!("Generating green");
-        let g = generate_channel(ITERATIONS_G);
-        println!("Generating blue");
-        let b = generate_channel(ITERATIONS_B);
+    let (r, g, b) = generate_channel();
 
-        println!("Normalizing red");
-        r.normalize();
-        println!("Normalizing green");
-        g.normalize();
-        println!("Normalizing blue");
-        b.normalize();
-
-        pixels_to_png(&r, &g, &b).unwrap();
-    }
+    pixels_to_png(&r, &g, &b).unwrap();
 }
