@@ -15,7 +15,7 @@ const ITERATIONS_R: usize = 50;
 const ITERATIONS_G: usize = 40;
 const ITERATIONS_B: usize = 30;
 
-const POINTS: usize = 1_000_00;
+const POINTS: usize = 10_000_000;
 
 const COMPLEX_PLANE_VIEW_WIDTH: f64 = 4.3;
 const COMPLEX_PLANE_VIEW_HEIGHT: f64 =
