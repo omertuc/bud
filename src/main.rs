@@ -8,12 +8,12 @@ use std::{
     thread,
 };
 
-const SCREEN_WIDTH: usize = 500 * 1;
-const SCREEN_HEIGHT: usize = 300 * 1;
+const SCREEN_WIDTH: usize = 2560 * 1;
+const SCREEN_HEIGHT: usize = 1440 * 1;
 
-const ITERATIONS_R: usize = 50;
-const ITERATIONS_G: usize = 40;
-const ITERATIONS_B: usize = 30;
+const ITERATIONS_R: usize = 2000;
+const ITERATIONS_G: usize = 1500;
+const ITERATIONS_B: usize = 1000;
 
 const POINTS: usize = 10_000_000;
 
@@ -84,11 +84,12 @@ fn pixels_to_png(
 fn try_escape(pow: f64, c: Complex<f64>, visited: &mut [Complex<f64>; ITERATIONS_R]) -> Option<usize> {
     let mut z = Complex::<f64> { re: 0.0, im: 0.0 };
     for i in 0..ITERATIONS_R {
-        z = z.powf(pow) + c;
-        visited[i] = z;
+        z = z.powu(2) + c;
 
-        if z.re * z.re + z.im * z.im > 4.0 {
-            return Some(i);
+        visited[i] = Complex::new(z.re * (1.0 - pow) + c.re * pow, z.im * (1.0 - pow) + c.im * pow);
+
+        if z.re * z.re + z.im * z.im >= 4.0 {
+            return Some(i + 1);
         }
     }
 
@@ -203,16 +204,15 @@ fn generate_channel(pow: f64) -> (
 }
 
 fn main() {
-    const FRAMES: usize = 10 * 60;
-    const FROM: f64 = 1.0;
-    const TO: f64 = 2.0;
+    const FRAMES: usize = 10 * 120;
+    const FROM: f64 = 0.0;
+    const TO: f64 = 1.0;
 
-    for i in 0..(FRAMES) {
+    for i in 0..FRAMES {
         let done = i as f64 / FRAMES as f64;
         let (r, g, b) = generate_channel((i as f64 / FRAMES as f64) * (TO - FROM) + FROM);
         pixels_to_png(&r, &g, &b, format!("frame-{:08}.png", i)).unwrap();
         println!("{:.2}% Done", done * 100.0);
-
     }
 
 }
